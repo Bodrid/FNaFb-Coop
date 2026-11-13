@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="FNaFb Co-op">
+<meta name="theme-color" content="#0c0a16">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>FNaFb Co-op</title>
+<style>
+:root { --bg: #0c0a16; --panel: #17142a; --gold: #e2b13c; --blue: #3c8ce2; --text: #f2f0f7; --muted: #a29fb3; --bad: #ff6b6b; }
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+main { max-width: 560px; margin: 0 auto; padding: max(20px, env(safe-area-inset-top)) 16px 40px; }
+h1 { margin: 6px 0 4px; font-size: 28px; color: var(--gold); letter-spacing: .5px; }
+.sub { color: var(--muted); margin: 0 0 18px; font-size: 14px; }
+.card { background: var(--panel); border: 1px solid #2a2640; border-radius: 12px; padding: 16px; margin-top: 14px; }
+.card h2 { margin: 0 0 8px; font-size: 17px; }
+ol { margin: 6px 0 0; padding-left: 20px; } li { margin: 5px 0; }
+button, .btn { display: block; width: 100%; padding: 14px; border: 0; border-radius: 10px; font: 600 17px/1 inherit; cursor: pointer; margin-top: 12px; text-align: center; }
+.play { background: var(--gold); color: #141018; font-size: 20px; padding: 18px; }
+.pick { background: var(--blue); color: #fff; }
+.quiet { background: transparent; color: var(--muted); border: 1px solid #3a3552; font-weight: 500; font-size: 15px; }
+button:disabled { opacity: .45; }
+.bar { height: 10px; background: #2a2640; border-radius: 6px; overflow: hidden; margin-top: 12px; }
+.bar > div { height: 100%; width: 0; background: var(--gold); transition: width .2s; }
+.note { color: var(--muted); font-size: 13px; margin-top: 10px; }
+.err { color: var(--bad); font-size: 14px; margin-top: 10px; white-space: pre-wrap; }
+.ok { color: #7ddc8b; }
+code { background: #241f3a; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+[hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>FNaFb Co-op</h1>
+  <p class="sub">Five Nights at F***boy's: Complete Collection with the online co-op mod, on your phone. Co-op, versus and public rooms work with players on PC.</p>
+
+  <section class="card" id="ready" hidden>
+    <h2 id="game-title">Your game is on this device</h2>
+    <div class="note" id="game-info"></div>
+    <button class="play" id="play">Play</button>
+    <div class="note">Turn your phone sideways. Tap <b>CO-OP</b> / <b>VERSUS</b> on the title screen or the <b>Co-op</b> button in game for online play.</div>
+  </section>
+
+  <section class="card" id="import">
+    <h2 id="import-title">Add your copy of the game</h2>
+    <div id="howto">
+      <ol>
+        <li>On your PC, find the game's folder (the one with <code>Game.exe</code> and the <code>www</code> folder) and zip it: right click &gt; <b>Compress to ZIP file</b> (Windows) or <b>Compress</b> (Mac).</li>
+        <li>Put the .zip on your phone: AirDrop, iCloud Drive, Google Drive or a cable.</li>
+        <li>Tap below and pick it. It's copied onto this phone once; after that the game works offline.</li>
+      </ol>
+    </div>
+    <input type="file" id="file" accept=".zip,application/zip,application/x-zip-compressed" hidden>
+    <button class="pick" id="pick">Choose the game's .zip</button>
+    <div id="progress" hidden>
+      <div class="bar"><div id="bar"></div></div>
+      <div class="note" id="status"></div>
+      <div class="note">Keep this screen open until it's done.</div>
+    </div>
+    <div class="err" id="error" hidden></div>
+  </section>
+
+  <section class="card" id="tips">
+    <h2>Good to know</h2>
+    <ul class="note" style="margin:0;padding-left:18px">
+      <li id="tip-home"><b>iPhone:</b> tap Share &gt; <b>Add to Home Screen</b> and start the game from there. It runs full screen, and iOS keeps your saves (Safari can clear a website's data after a few weeks unused).</li>
+      <li>Your saves stay on this phone. The co-op mod updates itself every time you start the game.</li>
+      <li>Your game is only copied onto this device. Nothing is uploaded anywhere.</li>
+    </ul>
+    <button class="quiet" id="remove" hidden>Remove the game from this device</button>
+  </section>
+</main>
+<script src="store.js"></script>
+<script src="zipread.js"></script>
+<script>
+(function() {
+    'use strict';
+    var $ = function(id) { return document.getElementById(id); };
+    var SKIP = [/^save\//i, /\.psd$/i, /\.sfk$/i, /^documents\//i, /(^|\/)\.ds_store$/i, /(^|\/)thumbs\.db$/i, /\.map$/i];
+    var mb = function(n) { return n >= 1e9 ? (n / 1e9).toFixed(2) + ' GB' : Math.round(n / 1e6) + ' MB'; };
+    var swReady = ('serviceWorker' in navigator) ? navigator.serviceWorker.register('sw.js').then(function() { return navigator.serviceWorker.ready; }) : Promise.reject(new Error('This browser can\'t run the game offline (no service workers).'));
+    if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(function() {});
+
+    function showError(msg) { var e = $('error'); e.textContent = msg; e.hidden = false; }
+    function refresh() {
+        return GameStore.meta().then(function(m) {
+            $('ready').hidden = !m;
+            $('remove').hidden = !m;
+            $('import-title').textContent = m ? 'Replace the game' : 'Add your copy of the game';
+            $('howto').hidden = !!m;
+            if (m) {
+                $('game-title').textContent = m.title || 'Your game is on this device';
+                $('game-info').textContent = m.files + ' files, ' + mb(m.bytes) + ', added ' + new Date(m.at).toLocaleDateString() + '.';
+            }
+            return m;
+        });
+    }
+
+    // The game's folder inside the zip: where index.html sits next to js/rpg_core.js.
+    function findRoot(list) {
+        var names = {};
+        list.forEach(function(e) { names[e.name.toLowerCase()] = true; });
+        var roots = list.filter(function(e) { return /(^|\/)index\.html$/i.test(e.name); })
+            .map(function(e) { return e.name.slice(0, e.name.length - 'index.html'.length); })
+            .filter(function(r) { return names[(r + 'js/rpg_core.js').toLowerCase()]; })
+            .sort(function(a, b) { return a.length - b.length; });
+        return roots.length ? roots[0] : null;
+    }
+
+    async function importZip(file) {
+        $('error').hidden = true;
+        $('progress').hidden = false;
+        $('pick').disabled = true;
+        $('play').disabled = true;
+        try {
+            $('status').textContent = 'Reading the zip...';
+            var list = await ZipRead.entries(file);
+            var root = findRoot(list);
+            if (root === null) throw new Error('No RPG Maker game found in this zip (looking for www/index.html with js/rpg_core.js next to it).');
+            var files = list.filter(function(e) {
+                if (e.name.indexOf(root) !== 0 || /^__MACOSX\//.test(e.name)) return false;
+                var rel = e.name.slice(root.length);
+                return rel && !SKIP.some(function(re) { return re.test(rel); });
+            });
+            var total = files.reduce(function(n, e) { return n + e.size; }, 0);
+            if (navigator.storage && navigator.storage.estimate) {
+                var est = await navigator.storage.estimate();
+                if (est.quota && est.quota - (est.usage || 0) < total * 1.05) {
+                    throw new Error('Not enough space for the game here: it needs ' + mb(total) + ', and this browser lets the site use ' + mb(est.quota - (est.usage || 0)) + '. Free up space on the phone and try again.');
+                }
+            }
+            await GameStore.clear();
+            var done = 0, bytes = 0, t0 = Date.now(), title = '';
+            for (var i = 0; i < files.length; i++) {
+                var e = files[i], rel = e.name.slice(root.length);
+                var blob = await ZipRead.extract(file, e);
+                await GameStore.put(rel, blob);
+                if (/^data\/system\.json$/i.test(rel)) { try { title = JSON.parse(await blob.text()).gameTitle || ''; } catch (err) { /* ignore */ } }
+                done++; bytes += e.size;
+                if (done % 5 === 0 || done === files.length) {
+                    var pct = total ? bytes / total : done / files.length;
+                    $('bar').style.width = (pct * 100).toFixed(1) + '%';
+                    var secs = (Date.now() - t0) / 1000, left = pct > 0.02 ? Math.round(secs / pct - secs) : 0;
+                    $('status').textContent = 'Copying ' + done + ' / ' + files.length + ' files (' + mb(bytes) + ' of ' + mb(total) + ')' + (left ? ', about ' + (left > 90 ? Math.round(left / 60) + ' min' : left + ' s') + ' left' : '');
+                }
+            }
+            await GameStore.setMeta({ title: title, files: done, bytes: bytes, at: Date.now() });
+            $('status').innerHTML = '<span class="ok">Done! The game is on this phone.</span>';
+            await refresh();
+        } catch (err) {
+            showError(String(err && err.message || err));
+            $('progress').hidden = true;
+        } finally {
+            $('pick').disabled = false;
+            $('play').disabled = false;
+        }
+    }
+
+    $('pick').onclick = function() { $('file').click(); };
+    $('file').onchange = function() { if (this.files && this.files[0]) importZip(this.files[0]); this.value = ''; };
+    $('play').onclick = function() {
+        swReady.then(function() {
+            if (!navigator.serviceWorker.controller) { location.reload(); return; }      // first visit: the worker takes over after a reload
+            location.href = 'game/index.html';
+        }).catch(function(e) { showError(String(e && e.message || e)); });
+    };
+    $('remove').onclick = function() {
+        if (this.textContent !== 'Tap again to remove it') { this.textContent = 'Tap again to remove it'; return; }
+        GameStore.clear().then(refresh).then(function() { $('remove').textContent = 'Remove the game from this device'; });
+    };
+    if (!/iPhone|iPad|iPod/.test(navigator.userAgent) && !(navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)) $('tip-home').hidden = true;
+    refresh().catch(function(e) { showError('Storage is not available in this browser (' + (e && e.message || e) + '). Private browsing can cause this.'); });
+    swReady.catch(function(e) { showError(String(e && e.message || e)); });
+})();
+</script>
+</body>
+</html>
