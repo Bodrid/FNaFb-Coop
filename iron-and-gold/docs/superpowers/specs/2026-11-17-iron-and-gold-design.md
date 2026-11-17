@@ -204,6 +204,15 @@ Each stage ends with something playable.
 6. **Events and formable nations; the 1776 start.**
 7. **AI depth up to Grand Master; balance and polish.**
 
+## Calls made by the designer (owner to check)
+
+- **AI runs inside the deterministic simulation** (seeded, issuing commands), so AI games replay identically and multiplayer later needs no AI rework.
+- **Occupied tiles do not change who controls a state** until the peace deal; control of a state (its population, buildings, income) stays with its owner during war, but occupation counts for war score and stops that state's production for its owner.
+- **The map does not wrap east–west** (like OpenFront); equirectangular projection, Antarctica left out.
+- **Trade routes are automatic** (the game opens routes for surpluses), with the player able to cancel or prioritise routes in the Trade tab.
+- **Saves carry a version number**; an update that can't load an older save says so instead of failing silently.
+- **Tabs:** as proposed in Interface (Companies under Nation; iPad's seventh tab is Power Bloc).
+
 ## Left to the builder
 
 - Tick rate, map resolution within the stated range, and all numeric tuning (prices, costs, growth, combat formulas, score weights, Grand Master bonuses).
