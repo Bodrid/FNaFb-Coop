@@ -59,7 +59,7 @@
         var start = e.offset + 30 + u16(lh, 26) + u16(lh, 28);
         var raw = blob.slice(start, start + e.csize);
         if (e.encrypted) throw new Error('The zip is password protected.');
-        if (e.method === 0) return new Blob([raw], { type: type || '' });
+        if (e.method === 0) return new Blob([await raw.arrayBuffer()], { type: type || '' });     // a copy: a slice would stay a link to the picked file
         if (e.method !== 8) throw new Error('Unsupported compression in ' + e.name + ' (method ' + e.method + '). Zip it with your phone or PC\'s normal "Compress".');
         if (typeof DecompressionStream !== 'function') throw new Error('This browser is too old to unzip (iOS 16.4 or newer is needed).');
         var stream = raw.stream().pipeThrough(new DecompressionStream('deflate-raw'));

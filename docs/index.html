@@ -51,13 +51,12 @@ code { background: #241f3a; padding: 1px 5px; border-radius: 4px; font-size: 13p
     <h2 id="import-title">Add your copy of the game</h2>
     <div id="howto">
       <ol>
-        <li>On your PC, find the game's folder (the one with <code>Game.exe</code> and the <code>www</code> folder) and zip it: right click &gt; <b>Compress to ZIP file</b> (Windows) or <b>Compress</b> (Mac).</li>
-        <li>Put the .zip on your phone: AirDrop, iCloud Drive, Google Drive or a cable.</li>
+        <li>Put the game's download on your phone (AirDrop, iCloud Drive, Google Drive or a cable). The <b>.rar</b> from Game Jolt works as it is, and so does a <b>.zip</b> of the game folder.</li>
         <li>Tap below and pick it. It's copied onto this phone once; after that the game works offline.</li>
       </ol>
     </div>
-    <input type="file" id="file" accept=".zip,application/zip,application/x-zip-compressed" hidden>
-    <button class="pick" id="pick">Choose the game's .zip</button>
+    <input type="file" id="file" hidden>
+    <button class="pick" id="pick">Choose the game (.rar or .zip)</button>
     <div id="progress" hidden>
       <div class="bar"><div id="bar"></div></div>
       <div class="note" id="status"></div>
@@ -113,16 +112,45 @@ code { background: #241f3a; padding: 1px 5px; border-radius: 4px; font-size: 13p
         return roots.length ? roots[0] : null;
     }
 
-    async function importZip(file) {
+    // A .zip is read here, one file at a time; anything else (.rar, .7z) goes to 7-Zip in a worker (arcworker.js).
+    async function isZip(file) {
+        var b = new Uint8Array(await file.slice(0, 2).arrayBuffer());
+        return b[0] === 0x50 && b[1] === 0x4b;
+    }
+    function arcWorker(msg, onPiece) {
+        return new Promise(function(resolve, reject) {
+            var w = new Worker('arcworker.js');
+            w.onmessage = function(e) {
+                var m = e.data;
+                if (m.t === 'file' || m.t === 'part') { onPiece(m); return; }
+                w.terminate();
+                if (m.t === 'error') reject(new Error(m.message)); else resolve(m);
+            };
+            w.onerror = function(e) { w.terminate(); reject(new Error('The archive reader stopped (' + (e.message || 'the phone may be out of memory') + ').')); };
+            w.postMessage(msg);
+        });
+    }
+
+    // The worker's scratch folder in the site's private storage (OPFS): part files waiting to be stored.
+    async function unpackDir(remove) {
+        if (!(navigator.storage && navigator.storage.getDirectory)) return null;
+        var root = await navigator.storage.getDirectory();
+        if (remove) { try { await root.removeEntry('fnafb-unpack', { recursive: true }); } catch (e) { /* not there */ } return null; }
+        return root.getDirectoryHandle('fnafb-unpack');
+    }
+
+    async function importGame(file) {
         $('error').hidden = true;
         $('progress').hidden = false;
         $('pick').disabled = true;
         $('play').disabled = true;
         try {
-            $('status').textContent = 'Reading the zip...';
-            var list = await ZipRead.entries(file);
+            $('status').textContent = 'Reading the file...';
+            var zip = await isZip(file);
+            var list = zip ? await ZipRead.entries(file) : (await arcWorker({ cmd: 'list', file: file })).entries;
+            list.forEach(function(e) { e.name = e.name.replace(/\\/g, '/'); });
             var root = findRoot(list);
-            if (root === null) throw new Error('No RPG Maker game found in this zip (looking for www/index.html with js/rpg_core.js next to it).');
+            if (root === null) throw new Error('No RPG Maker game found in this file (looking for www/index.html with js/rpg_core.js next to it).');
             var files = list.filter(function(e) {
                 if (e.name.indexOf(root) !== 0 || /^__MACOSX\//.test(e.name)) return false;
                 var rel = e.name.slice(root.length);
@@ -137,18 +165,39 @@ code { background: #241f3a; padding: 1px 5px; border-radius: 4px; font-size: 13p
             }
             await GameStore.clear();
             var done = 0, bytes = 0, t0 = Date.now(), title = '';
-            for (var i = 0; i < files.length; i++) {
-                var e = files[i], rel = e.name.slice(root.length);
-                var blob = await ZipRead.extract(file, e);
+            var stored = async function(rel, blob) {
                 await GameStore.put(rel, blob);
                 if (/^data\/system\.json$/i.test(rel)) { try { title = JSON.parse(await blob.text()).gameTitle || ''; } catch (err) { /* ignore */ } }
-                done++; bytes += e.size;
+                done++; bytes += blob.size;
                 if (done % 5 === 0 || done === files.length) {
                     var pct = total ? bytes / total : done / files.length;
                     $('bar').style.width = (pct * 100).toFixed(1) + '%';
                     var secs = (Date.now() - t0) / 1000, left = pct > 0.02 ? Math.round(secs / pct - secs) : 0;
                     $('status').textContent = 'Copying ' + done + ' / ' + files.length + ' files (' + mb(bytes) + ' of ' + mb(total) + ')' + (left ? ', about ' + (left > 90 ? Math.round(left / 60) + ' min' : left + ' s') + ' left' : '');
                 }
+            };
+            if (zip) {
+                for (var i = 0; i < files.length; i++) await stored(files[i].name.slice(root.length), await ZipRead.extract(file, files[i]));
+            } else {
+                $('status').textContent = 'Unpacking...';
+                var chain = Promise.resolve();
+                await unpackDir(true).catch(function() {});
+                var keep = function(name, blob) {
+                    name = name.replace(/\\/g, '/');
+                    return name.indexOf(root) === 0 ? stored(name.slice(root.length), blob) : null;
+                };
+                await arcWorker({ cmd: 'extract', file: file, names: files.map(function(e) { return e.name; }), total: total }, function(m) {
+                    if (m.t === 'file') { var blob = new Blob([m.data]); chain = chain.then(function() { return keep(m.name, blob); }); return; }
+                    chain = chain.then(async function() {                // a full part: store its files (read from disk), then delete it
+                        var dir = await unpackDir(), fh = await dir.getFileHandle('part' + m.part), f = await fh.getFile();
+                        // copied out first: a slice of the part file would be stored as a link to it, and the part is deleted below
+                        for (var k = 0; k < m.entries.length; k++) await keep(m.entries[k].name, new Blob([await f.slice(m.entries[k].offset, m.entries[k].offset + m.entries[k].size).arrayBuffer()]));
+                        await dir.removeEntry('part' + m.part);
+                    });
+                });
+                await chain;
+                await unpackDir(true).catch(function() {});
+                if (done < files.length) throw new Error('Only ' + done + ' of the game\'s ' + files.length + ' files came out of the archive. It may be damaged: try downloading it again.');
             }
             await GameStore.setMeta({ title: title, files: done, bytes: bytes, at: Date.now() });
             $('status').innerHTML = '<span class="ok">Done! The game is on this phone.</span>';
@@ -163,7 +212,7 @@ code { background: #241f3a; padding: 1px 5px; border-radius: 4px; font-size: 13p
     }
 
     $('pick').onclick = function() { $('file').click(); };
-    $('file').onchange = function() { if (this.files && this.files[0]) importZip(this.files[0]); this.value = ''; };
+    $('file').onchange = function() { if (this.files && this.files[0]) importGame(this.files[0]); this.value = ''; };
     $('play').onclick = function() {
         swReady.then(function() {
             if (!navigator.serviceWorker.controller) { location.reload(); return; }      // first visit: the worker takes over after a reload
